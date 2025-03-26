@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rubik's Cube - Interactive</title>
+    <style>
+        /* CSS remains the same */
+        body { margin: 0; overflow: hidden; background-color: #a0a0a0; font-family: monospace; }
+        canvas { display: block; cursor: grab; }
+        canvas.grabbing { cursor: grabbing; }
+        canvas.dragging-cube { cursor: pointer; }
+        #container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #controls { position: absolute; top: 10px; left: 10px; background: rgba(255,255,255,0.85); padding: 12px; border-radius: 6px; z-index: 10; max-width: 210px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        #controls button { margin: 3px; padding: 6px 9px; cursor: pointer; font-size: 13px; min-width: 32px; border: 1px solid #ccc; background-color: #f8f8f8; border-radius: 3px; transition: background-color 0.1s ease; }
+        #controls button:hover { background-color: #e8e8e8; }
+        #controls button:active { background-color: #ddd; }
+        .move-set { margin-bottom: 6px; line-height: 1.9; }
+        hr { margin: 10px 0; border: 0; border-top: 1px solid #ccc; }
+        #solve-info { font-size: 11px; margin-top: 6px; color: #444; }
+        #congrats-overlay {
+             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+             padding: 20px 40px; background: rgba(0, 150, 0, 0.8); color: white;
+             font-size: 24px; border-radius: 10px; text-align: center;
+             z-index: 100; display: none; box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+        }
+    </style>
+    <!-- Imports (same) -->
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="controls">
+         <div><strong>Controls:</strong></div>
+         <div>Drag BG: Rotate View</div>
+         <div>Click Cube Face: Rotate CW</div>
+         <div>Drag Cube Face: Rotate</div>
+         <hr>
+        <div><strong>Manual Moves:</strong></div>
+        <!-- Buttons (same) -->
+         <div class="move-set"> <button data-move="R">R</button> <button data-move="L">L</button> <button data-move="U">U</button> <button data-move="D">D</button> <button data-move="F">F</button> <button data-move="B">B</button> </div>
+         <div class="move-set"> <button data-move="R'">R'</button> <button data-move="L'">L'</button> <button data-move="U'">U'</button> <button data-move="D'">D'</button> <button data-move="F'">F'</button> <button data-move="B'">B'</button> </div>
+         <div class="move-set"> <button data-move="R2">R2</button> <button data-move="L2">L2</button> <button data-move="U2">U2</button> <button data-move="D2">D2</button> <button data-move="F2">F2</button> <button data-move="B2">B2</button> </div>
+        <hr>
+        <div><strong>Functions:</strong></div>
+        <!-- Func Buttons (same) -->
+         <button id="reset">Reset</button> <button id="scramble">Scramble</button> <button id="solve">Solve</button>
+         <div id="solve-info">(Solves last Scramble btn use)</div> <!-- Updated text -->
+    </div>
+    <div id="congrats-overlay">Solved!<br>🎉</div>
+
+    <!-- JavaScript -->
+    <script type="module">
+        // --- Imports (same) ---
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+        // --- Config (same) ---
+        const CUBIE_SIZE = 1; const CUBIE_SPACING = 0.08; const CUBIE_BEVEL_RADIUS = 0.06;
+        const CUBIE_BEVEL_SEGMENTS = 4; const CUBE_DIM = 3; const ANIMATION_DURATION = 200;
+        const SCRAMBLE_MOVES = 20; const DRAG_THRESHOLD = 0.02;
+
+        const colors = { /* same */ white: 0xffffff, yellow: 0xffd700, blue: 0x0051ba, green: 0x009e60, red: 0xc41e3a, orange: 0xff5800, black: 0x1a1a1a };
+
+        // --- Globals (same) ---
+        let scene, camera, renderer, controls, ground, rubiksCube = new THREE.Group();
+        let isAnimating = false, animationQueue = [], lastScrambleSequence = [];
+        const raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+        let intersectedObject = null, intersectedFaceNormal = null, dragStartPoint = null;
+        let isDraggingCube = false; // Removed orbitControlsEnabledBackup
+        let mouseDownPosition = new THREE.Vector2();
+        let audioContext, sounds = {};
+
+        // --- Materials (same) ---
+        const materials = { /* same */ white: new THREE.MeshStandardMaterial({ color: colors.white, roughness: 0.2, metalness: 0.1 }), yellow: new THREE.MeshStandardMaterial({ color: colors.yellow, roughness: 0.2, metalness: 0.1 }), blue: new THREE.MeshStandardMaterial({ color: colors.blue, roughness: 0.2, metalness: 0.1 }), green: new THREE.MeshStandardMaterial({ color: colors.green, roughness: 0.2, metalness: 0.1 }), red: new THREE.MeshStandardMaterial({ color: colors.red, roughness: 0.2, metalness: 0.1 }), orange: new THREE.MeshStandardMaterial({ color: colors.orange, roughness: 0.2, metalness: 0.1 }), black: new THREE.MeshStandardMaterial({ color: colors.black, roughness: 0.5 }) };
+
+        // --- Initialization (Updated Zoom Limits) ---
+        function init() {
+            // Scene, Camera, Renderer, Lighting, Ground (mostly same)
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0xa0a0a0); scene.fog = new THREE.Fog(0xa0a0a0, 10, 50);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100); camera.position.set(4, 5, 7);
+            renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(window.innerWidth, window.innerHeight); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; document.getElementById('container').appendChild(renderer.domElement);
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5); hemiLight.position.set(0, 20, 0); scene.add(hemiLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); dirLight.position.set(5, 10, 7.5); dirLight.castShadow = true; /* shadow props same */ dirLight.shadow.camera.top = 5; dirLight.shadow.camera.bottom = -5; dirLight.shadow.camera.left = -5; dirLight.shadow.camera.right = 5; dirLight.shadow.camera.near = 0.1; dirLight.shadow.camera.far = 40; dirLight.shadow.mapSize.width = 1024; dirLight.shadow.mapSize.height = 1024; scene.add(dirLight);
+            const groundGeo = new THREE.PlaneGeometry(100, 100); const groundMat = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.8, metalness: 0.2 }); ground = new THREE.Mesh(groundGeo, groundMat); ground.rotation.x = -Math.PI / 2; ground.position.y = -2; ground.receiveShadow = true; scene.add(ground);
+
+            // OrbitControls (Updated min/maxDistance)
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; controls.dampingFactor = 0.05;
+            controls.target.set(0, 0.5, 0);
+            controls.minDistance = 4; // *** Adjusted Min Zoom ***
+            controls.maxDistance = 25; // *** Adjusted Max Zoom ***
+            controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+            buildCube(); scene.add(rubiksCube);
+            setupAudio();
+            setupEventListeners(); window.addEventListener('resize', onWindowResize, false);
+            animate();
+        }
+
+        // --- Audio Setup (same) ---
+        function setupAudio() { /* ... same ... */ try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); sounds.rotate = createSoundBuffer(0.05, 'square', 800, 400); sounds.solve = createSoundBuffer(0.5, 'triangle', 440, 880, 0.2); } catch (e) { console.warn("Web Audio API not supported."); } }
+        function createSoundBuffer(duration, type, freqStart, freqEnd, gain=0.1) { /* ... same ... */ if (!audioContext) return null; const sr = audioContext.sampleRate, fc = sr * duration, buf = audioContext.createBuffer(1, fc, sr), data = buf.getChannelData(0); for (let i = 0; i < fc; i++) { const p = i / fc, f = freqStart + (freqEnd - freqStart) * p, t = i / sr; let v = 0; switch (type) { case 'sine': v = Math.sin(2 * Math.PI * f * t); break; case 'square': v = Math.sign(Math.sin(2 * Math.PI * f * t)); break; case 'sawtooth': v = 2 * (t * f - Math.floor(0.5 + t * f)); break; case 'triangle': v = 2 * Math.abs(2 * (t * f - Math.floor(0.5 + t * f))) - 1; break; } data[i] = v * gain * (1 - p); } return buf; }
+        function playSound(buffer) { /* ... same ... */ if (!audioContext || !buffer) return; const src = audioContext.createBufferSource(); src.buffer = buffer; src.connect(audioContext.destination); src.start(0); }
+
+        // --- Cube Building (same) ---
+        function buildCube() { /* ... same ... */ while(rubiksCube.children.length > 0){ rubiksCube.remove(rubiksCube.children[0]); } const totalSize = CUBIE_SIZE + CUBIE_SPACING, offset = (CUBE_DIM - 1) / 2; const geometry = new RoundedBoxGeometry(CUBIE_SIZE, CUBIE_SIZE, CUBIE_SIZE, CUBIE_BEVEL_SEGMENTS, CUBIE_BEVEL_RADIUS); for (let x = 0; x < CUBE_DIM; x++) for (let y = 0; y < CUBE_DIM; y++) for (let z = 0; z < CUBE_DIM; z++) { if (x === 1 && y === 1 && z === 1) continue; const relX = x - offset, relY = y - offset, relZ = z - offset; const cubieMaterials = [ relX === 1 ? materials.red : materials.black, relX === -1 ? materials.orange : materials.black, relY === 1 ? materials.white : materials.black, relY === -1 ? materials.yellow : materials.black, relZ === 1 ? materials.blue : materials.black, relZ === -1 ? materials.green : materials.black ]; const cubie = new THREE.Mesh(geometry, cubieMaterials); cubie.position.set(relX * totalSize, relY * totalSize, relZ * totalSize); cubie.castShadow = true; cubie.receiveShadow = true; cubie.userData.relX = relX; cubie.userData.relY = relY; cubie.userData.relZ = relZ; rubiksCube.add(cubie); } rubiksCube.position.y = 0.5; }
+
+        // --- Rotation Logic Helpers (same) ---
+        function getCubiesForFace(face) { /* ... same ... */ const axis = getAxisFromFace(face); const targetCoord = getCoordForFace(face); const totalSize = CUBIE_SIZE + CUBIE_SPACING; const tolerance = totalSize * 0.5; const cubies = []; rubiksCube.children.forEach(cubie => { if (Math.abs(cubie.position[axis] - targetCoord * totalSize) < tolerance) { cubies.push(cubie); } }); return cubies; }
+        function getAxisFromFace(face) { return 'RL'.includes(face) ? 'x' : 'UD'.includes(face) ? 'y' : 'z'; }
+        function getCoordForFace(face) { return 'RUF'.includes(face) ? 1 : -1; }
+        function getRotationAngle(direction) { return direction * Math.PI / 2; }
+        function easeInOutCubic(t) { return t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+
+        // --- Core Animation (REMOVED controls enable/disable) ---
+        function animateRotation(face, direction, callback) {
+            // *** REMOVED orbitControlsEnabledBackup logic and controls.enabled = false/true ***
+            if (isAnimating) { if (callback) Promise.resolve().then(callback); return; }
+            isAnimating = true; // Still track animation state
+
+            const axis = getAxisFromFace(face); const angle = getRotationAngle(direction); const cubiesToRotate = getCubiesForFace(face);
+            if (cubiesToRotate.length !== 9) { console.error(`Rotation Error: Found ${cubiesToRotate.length} cubies for face ${face}. Aborting.`); isAnimating = false; /* Removed controls.enabled */ if (callback) Promise.resolve().then(callback); processAnimationQueue(); return; }
+            const pivot = new THREE.Group(); pivot.position.copy(rubiksCube.position); scene.add(pivot); cubiesToRotate.forEach(cubie => pivot.attach(cubie));
+            let startTime = null; const startRotation = pivot.rotation.clone();
+            function step(timestamp) {
+                if (startTime === null) startTime = timestamp; const elapsed = timestamp - startTime; const progress = easeInOutCubic(Math.min(elapsed / ANIMATION_DURATION, 1)); pivot.rotation[axis] = startRotation[axis] + angle * progress;
+                if (progress < 1) { requestAnimationFrame(step); } else { pivot.rotation[axis] = startRotation[axis] + angle; pivot.updateMatrixWorld(); const childrenToMove = [...pivot.children]; childrenToMove.forEach(cubie => rubiksCube.attach(cubie)); scene.remove(pivot); const snapValue = CUBIE_SIZE + CUBIE_SPACING; const angleSnap = Math.PI / 2; childrenToMove.forEach(cubie => { cubie.position.x = Math.round(cubie.position.x / snapValue) * snapValue; cubie.position.y = Math.round(cubie.position.y / snapValue) * snapValue; cubie.position.z = Math.round(cubie.position.z / snapValue) * snapValue; const euler = new THREE.Euler().setFromQuaternion(cubie.quaternion, 'XYZ'); euler.x = Math.round(euler.x / angleSnap) * angleSnap; euler.y = Math.round(euler.y / angleSnap) * angleSnap; euler.z = Math.round(euler.z / angleSnap) * angleSnap; cubie.quaternion.setFromEuler(euler); });
+                    isAnimating = false; // *** Removed controls.enabled = orbitControlsEnabledBackup ***
+                    if (callback) callback(); processAnimationQueue();
+                }
+            } requestAnimationFrame(step);
+        }
+
+
+        // --- Move Parsing, Execution, Queue, Inverse (same) ---
+        function parseMove(moveNotation) { /* ... same ... */ const face = moveNotation.charAt(0); let direction = 1, turns = 1; if (moveNotation.length > 1) { if (moveNotation.charAt(1) === "'") direction = -1; else if (moveNotation.charAt(1) === '2') turns = 2; } if (!'RLUDFB'.includes(face)) return null; return { face, direction, turns }; }
+        function executeMove(moveNotation, callback) { /* ... same + sound ... */ const move = parseMove(moveNotation); if (!move) { if (callback) Promise.resolve().then(callback); processAnimationQueue(); return; } const singleTurn = (cb) => { playSound(sounds.rotate); animateRotation(move.face, move.direction, cb); }; if (move.turns === 1) { singleTurn(callback); } else if (move.turns === 2) { singleTurn(() => singleTurn(callback)); } }
+        function processAnimationQueue() { /* ... same + checkSolvedState on last ... */ if (isAnimating || animationQueue.length === 0) return; const nextMove = animationQueue.shift(); let finalCallback = nextMove.callback; if (animationQueue.length === 0) { finalCallback = () => { if (nextMove.callback) nextMove.callback(); checkSolvedState(); }; } executeMove(nextMove.notation, finalCallback); }
+        function setAnimationQueue(movesArray, completionCallback) { /* ... same ... */ if (isAnimating) { /*...*/ return; } animationQueue = []; movesArray.forEach((move, index) => { animationQueue.push({ notation: move, callback: (index === movesArray.length - 1) ? completionCallback : null }); }); processAnimationQueue(); }
+        function getInverseMove(moveNotation) { /* ... same ... */ if (moveNotation.length === 1) return moveNotation + "'"; if (moveNotation.endsWith("'")) return moveNotation.charAt(0); return moveNotation; }
+
+        // --- Solved State Check & Effects (same) ---
+        function isSolved() { /* ... same visual check ... */ const faces = [ { axis: 'x', coord: 1, expectedMat: materials.red }, { axis: 'x', coord: -1, expectedMat: materials.orange }, { axis: 'y', coord: 1, expectedMat: materials.white }, { axis: 'y', coord: -1, expectedMat: materials.yellow }, { axis: 'z', coord: 1, expectedMat: materials.blue }, { axis: 'z', coord: -1, expectedMat: materials.green } ]; const faceNormal = new THREE.Vector3(); const tolerance = 0.1; for (const faceInfo of faces) { const cubiesOnFace = getCubiesForFace( Object.keys(materials).find(key => materials[key] === faceInfo.expectedMat) ); if (!cubiesOnFace || cubiesOnFace.length !== 9) return false; faceNormal.set(0, 0, 0); faceNormal[faceInfo.axis] = faceInfo.coord; for (const cubie of cubiesOnFace) { const localNormal = cubie.worldToLocal(faceNormal.clone().add(cubie.position)).normalize(); let visibleMaterial = null; if (Math.abs(localNormal.x - 1) < tolerance) visibleMaterial = cubie.material[0]; else if (Math.abs(localNormal.x - (-1)) < tolerance) visibleMaterial = cubie.material[1]; else if (Math.abs(localNormal.y - 1) < tolerance) visibleMaterial = cubie.material[2]; else if (Math.abs(localNormal.y - (-1)) < tolerance) visibleMaterial = cubie.material[3]; else if (Math.abs(localNormal.z - 1) < tolerance) visibleMaterial = cubie.material[4]; else if (Math.abs(localNormal.z - (-1)) < tolerance) visibleMaterial = cubie.material[5]; if (!visibleMaterial || visibleMaterial !== faceInfo.expectedMat) return false; } } return true; }
+        function checkSolvedState() { /* ... same timeout ... */ setTimeout(() => { if (isSolved()) { console.log("Cube Solved!"); playSound(sounds.solve); showCongratsAnimation(); lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Solved!)"; } }, 100); }
+        function showCongratsAnimation() { /* ... same overlay/pulse ... */ const overlay = document.getElementById('congrats-overlay'); overlay.style.display = 'block'; const startScale = rubiksCube.scale.clone(), targetScale = startScale.clone().multiplyScalar(1.1); const duration = 300; let startTime = performance.now(); function animateCongrats(time) { const elapsed = time - startTime, progress = Math.min(elapsed / duration, 1), easedProgress = 0.5 - 0.5 * Math.cos(progress * Math.PI); const scale = progress < 0.5 ? startScale.clone().lerp(targetScale, easedProgress * 2) : targetScale.clone().lerp(startScale, (easedProgress - 0.5) * 2); rubiksCube.scale.copy(scale); if (progress < 1) requestAnimationFrame(animateCongrats); else { rubiksCube.scale.copy(startScale); setTimeout(() => { overlay.style.display = 'none'; }, 1500); } } requestAnimationFrame(animateCongrats); }
+
+        // --- Button Actions (Updated handleSolve) ---
+        function handleReset() { /* ... same ... */ animationQueue = []; isAnimating = false; controls.enabled = true; console.log("Resetting..."); lastScrambleSequence = []; buildCube(); document.getElementById('solve-info').textContent = "(Solves last Scramble btn use)"; console.log("Cube reset."); }
+        function handleScramble() { /* ... same ... */ if (isAnimating) return; console.log("Scrambling..."); const moves = ['R', 'L', 'U', 'D', 'F', 'B'], mods = ['', "'", '2']; let sequence = [], lastFace = ''; for (let i = 0; i < SCRAMBLE_MOVES; i++) { let move; do { move = moves[Math.floor(Math.random()*6)]+mods[Math.floor(Math.random()*3)]; } while (move.charAt(0)===lastFace); sequence.push(move); lastFace=move.charAt(0); } console.log("Scramble:", sequence.join(' ')); lastScrambleSequence = [...sequence]; document.getElementById('solve-info').textContent = "(Solves last Scramble btn use)"; setAnimationQueue(sequence, () => console.log("Scramble complete.")); }
+
+        // *** UPDATED Solve Handler ***
+        function handleSolve() {
+             if (isAnimating) return; // Don't interrupt ongoing animation sequence
+
+             if (lastScrambleSequence.length === 0) {
+                 // Cannot solve arbitrary state - explain and reset
+                 console.warn("Cannot solve custom cube state. Resetting cube instead.");
+                 alert("Cannot solve from the current state.\nThis function can only solve the state immediately after using the 'Scramble' button.\nResetting the cube."); // User feedback
+                 document.getElementById('solve-info').textContent = "(Cannot solve custom state)";
+                 handleReset(); // Reset the cube
+                 return;
+             }
+
+             // If scramble sequence exists, proceed to solve it
+            console.log("Solving by reversing last scramble...");
+            const solveSequence = lastScrambleSequence.map(getInverseMove).reverse();
+            console.log("Solve sequence:", solveSequence.join(' '));
+            lastScrambleSequence = []; // Clear scramble history after use
+            document.getElementById('solve-info').textContent = "(Solving...)"; // Update status
+            setAnimationQueue(solveSequence, () => {
+                // Completion check happens automatically via processAnimationQueue
+                console.log("Solve sequence finished processing.");
+             });
+        }
+
+
+        // --- Mouse/Pointer Event Listeners Setup (same) ---
+        function setupEventListeners() { /* ... same ... */
+            const canvas = renderer.domElement; canvas.addEventListener('pointerdown', onPointerDown); canvas.addEventListener('pointermove', onPointerMove); canvas.addEventListener('pointerup', onPointerUp); canvas.addEventListener('pointerleave', onPointerLeave);
+            document.querySelectorAll('#controls button[data-move]').forEach(button => { button.addEventListener('click', () => { if (isAnimating) return; const move = button.getAttribute('data-move'); if (lastScrambleSequence.length > 0) { lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Manual moves made)"; } setAnimationQueue([move], null); }); });
+            document.getElementById('reset').addEventListener('click', handleReset); document.getElementById('scramble').addEventListener('click', handleScramble); document.getElementById('solve').addEventListener('click', handleSolve);
+        }
+
+        // --- Pointer Interaction Logic (REMOVED controls enable/disable during drag) ---
+        function updatePointerCoords(event) { /* ... same ... */ mouse.x = (event.clientX / window.innerWidth) * 2 - 1; mouse.y = - (event.clientY / window.innerHeight) * 2 + 1; }
+
+        function onPointerDown(event) {
+            if (isAnimating || event.buttons !== 1) return;
+            updatePointerCoords(event); mouseDownPosition.copy(mouse); raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObjects(rubiksCube.children);
+            if (intersects.length > 0) {
+                const intersect = intersects[0]; isDraggingCube = true; intersectedObject = intersect.object; intersectedFaceNormal = intersect.face.normal.clone().transformDirection(intersectedObject.matrixWorld).normalize(); dragStartPoint = intersect.point.clone();
+                // *** REMOVED disabling controls ***
+                renderer.domElement.classList.add('dragging-cube');
+            } else {
+                isDraggingCube = false; renderer.domElement.classList.remove('dragging-cube');
+                // *** REMOVED re-enabling controls here ***
+                renderer.domElement.classList.toggle('grabbing', true);
+            }
+        }
+
+        function onPointerMove(event) {
+             updatePointerCoords(event);
+             if (isDraggingCube) { renderer.domElement.classList.add('dragging-cube'); }
+             // *** Allow OrbitControls to update cursor via its own listeners if not dragging cube ***
+             // else if (event.buttons === 1 && controls.enabled) { renderer.domElement.classList.add('grabbing'); }
+             // else { renderer.domElement.classList.remove('grabbing'); }
+             // Let OrbitControls handle its own cursor updates based on its state
+        }
+
+        function onPointerUp(event) {
+            // *** REMOVED re-enabling controls here ***
+            renderer.domElement.classList.remove('dragging-cube');
+            // renderer.domElement.classList.remove('grabbing'); // Let OrbitControls manage this
+
+            if (isDraggingCube && !isAnimating) {
+                updatePointerCoords(event); const dragDistance = mouseDownPosition.distanceTo(mouse);
+                if (dragDistance < DRAG_THRESHOLD) { determineRotationFromClick(); } // CLICK
+                else { // DRAG
+                     raycaster.setFromCamera(mouse, camera); const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()).negate(), dragStartPoint); const currentPoint = new THREE.Vector3();
+                     if (raycaster.ray.intersectPlane(plane, currentPoint)) { const dragVector = currentPoint.clone().sub(dragStartPoint); if (dragVector.lengthSq() > 0.001) { determineRotationFromDrag(dragVector); } else { determineRotationFromClick(); } }
+                     else { determineRotationFromClick(); } // Fallback to click if plane intersect fails
+                }
+            }
+            isDraggingCube = false; intersectedObject = null; intersectedFaceNormal = null; dragStartPoint = null; // Reset state AFTER processing
+        }
+
+        function onPointerLeave(event) { if(isDraggingCube) { onPointerUp(event); } } // Only process if a drag was active
+
+        // --- Determine Rotation Click/Drag (same logic) ---
+        function determineRotationFromClick() { /* ... same ... */ if (!intersectedFaceNormal || isAnimating) return; let face = null; const threshold = 0.9; if (Math.abs(intersectedFaceNormal.x) > threshold) face = intersectedFaceNormal.x > 0 ? 'R' : 'L'; else if (Math.abs(intersectedFaceNormal.y) > threshold) face = intersectedFaceNormal.y > 0 ? 'U' : 'D'; else if (Math.abs(intersectedFaceNormal.z) > threshold) face = intersectedFaceNormal.z > 0 ? 'F' : 'B'; if (face) { const direction = 1; const moveNotation = face + (direction === -1 ? "'" : ""); console.log("Click Rotation:", moveNotation); if (lastScrambleSequence.length > 0) { lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Manual moves made)"; } setAnimationQueue([moveNotation], null); } }
+        function determineRotationFromDrag(dragVector) { /* ... same complex logic ... */ if (!intersectedObject || !intersectedFaceNormal || dragVector.lengthSq() === 0 || isAnimating) return; const worldX = new THREE.Vector3(1, 0, 0), worldY = new THREE.Vector3(0, 1, 0), worldZ = new THREE.Vector3(0, 0, 1); const dragOnPlane = dragVector.clone().projectOnPlane(intersectedFaceNormal); if (dragOnPlane.lengthSq() < 0.0001) return; let maxDot = -Infinity, rotationAxis = null; [worldX, worldY, worldZ].forEach(axis => { if (Math.abs(axis.dot(intersectedFaceNormal)) < 0.9) { const dot = Math.abs(dragOnPlane.dot(axis)); if (dot > maxDot) { maxDot = dot; rotationAxis = axis.clone(); } } }); if (!rotationAxis) return; const positiveRotationDirection = new THREE.Vector3().crossVectors(intersectedFaceNormal, rotationAxis).normalize(); let directionSign = Math.sign(dragOnPlane.dot(positiveRotationDirection)); if (directionSign === 0) directionSign = 1; let face = null; let direction = directionSign; const cubieRelPos = intersectedObject.position.clone(); if (rotationAxis.equals(worldX)) { face = cubieRelPos.x > 0 ? 'R' : 'L'; if (Math.abs(intersectedFaceNormal.dot(worldY)) > 0.5) direction *= Math.sign(intersectedFaceNormal.y); if (Math.abs(intersectedFaceNormal.dot(worldZ)) > 0.5) direction *= -Math.sign(intersectedFaceNormal.z); } else if (rotationAxis.equals(worldY)) { face = cubieRelPos.y > 0 ? 'U' : 'D'; if (Math.abs(intersectedFaceNormal.dot(worldX)) > 0.5) direction *= -Math.sign(intersectedFaceNormal.x); if (Math.abs(intersectedFaceNormal.dot(worldZ)) > 0.5) direction *= Math.sign(intersectedFaceNormal.z); } else if (rotationAxis.equals(worldZ)) { face = cubieRelPos.z > 0 ? 'F' : 'B'; if (Math.abs(intersectedFaceNormal.dot(worldX)) > 0.5) direction *= Math.sign(intersectedFaceNormal.x); if (Math.abs(intersectedFaceNormal.dot(worldY)) > 0.5) direction *= -Math.sign(intersectedFaceNormal.y); } if (face) { const moveNotation = face + (direction === -1 ? "'" : ""); console.log("Drag Rotation:", moveNotation); if (lastScrambleSequence.length > 0) { lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Manual moves made)"; } setAnimationQueue([moveNotation], null); } }
+
+        // --- Resize Handler (same) ---
+        function onWindowResize() { /* ... same ... */ camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+
+        // --- Main Animation Loop (modified to always update controls) ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // *** Always update controls for damping/inertia ***
+            renderer.render(scene, camera);
+        }
+
+        // --- Start ---
+        init();
+
+    </script>
+</body>
+</html>
