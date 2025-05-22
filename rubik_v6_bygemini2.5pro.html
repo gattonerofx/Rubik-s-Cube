@@ -178,14 +178,22 @@
         }
 
 
-        // --- Mouse/Pointer Event Listeners Setup (same) ---
-        function setupEventListeners() { /* ... same ... */
-            const canvas = renderer.domElement; canvas.addEventListener('pointerdown', onPointerDown); canvas.addEventListener('pointermove', onPointerMove); canvas.addEventListener('pointerup', onPointerUp); canvas.addEventListener('pointerleave', onPointerLeave);
+        // --- Mouse/Pointer Event Listeners Setup (MODIFIED) ---
+        function setupEventListeners() {
+            const canvas = renderer.domElement;
+            canvas.addEventListener('pointerdown', onPointerDown);
+            canvas.addEventListener('pointermove', onPointerMove);
+            canvas.addEventListener('pointerup', onPointerUp);
+            canvas.addEventListener('pointerleave', onPointerLeave);
+            canvas.addEventListener('pointercancel', onPointerCancel); // <-- ADDED pointercancel listener
+
             document.querySelectorAll('#controls button[data-move]').forEach(button => { button.addEventListener('click', () => { if (isAnimating) return; const move = button.getAttribute('data-move'); if (lastScrambleSequence.length > 0) { lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Manual moves made)"; } setAnimationQueue([move], null); }); });
-            document.getElementById('reset').addEventListener('click', handleReset); document.getElementById('scramble').addEventListener('click', handleScramble); document.getElementById('solve').addEventListener('click', handleSolve);
+            document.getElementById('reset').addEventListener('click', handleReset);
+            document.getElementById('scramble').addEventListener('click', handleScramble);
+            document.getElementById('solve').addEventListener('click', handleSolve);
         }
 
-        // --- Pointer Interaction Logic (REMOVED controls enable/disable during drag) ---
+        // --- Pointer Interaction Logic (MODIFIED controls enable/disable during drag) ---
         function updatePointerCoords(event) { /* ... same ... */ mouse.x = (event.clientX / window.innerWidth) * 2 - 1; mouse.y = - (event.clientY / window.innerHeight) * 2 + 1; }
 
         function onPointerDown(event) {
@@ -193,11 +201,11 @@
             updatePointerCoords(event); mouseDownPosition.copy(mouse); raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObjects(rubiksCube.children);
             if (intersects.length > 0) {
                 const intersect = intersects[0]; isDraggingCube = true; intersectedObject = intersect.object; intersectedFaceNormal = intersect.face.normal.clone().transformDirection(intersectedObject.matrixWorld).normalize(); dragStartPoint = intersect.point.clone();
-                // *** REMOVED disabling controls ***
+                controls.enabled = false; // <--- ADDED THIS LINE
                 renderer.domElement.classList.add('dragging-cube');
             } else {
                 isDraggingCube = false; renderer.domElement.classList.remove('dragging-cube');
-                // *** REMOVED re-enabling controls here ***
+                controls.enabled = true; // <--- ENSURED THIS IS PRESENT
                 renderer.domElement.classList.toggle('grabbing', true);
             }
         }
@@ -205,17 +213,11 @@
         function onPointerMove(event) {
              updatePointerCoords(event);
              if (isDraggingCube) { renderer.domElement.classList.add('dragging-cube'); }
-             // *** Allow OrbitControls to update cursor via its own listeners if not dragging cube ***
-             // else if (event.buttons === 1 && controls.enabled) { renderer.domElement.classList.add('grabbing'); }
-             // else { renderer.domElement.classList.remove('grabbing'); }
              // Let OrbitControls handle its own cursor updates based on its state
+             // (No changes needed here for grabbing cursor as OrbitControls will manage when enabled)
         }
 
         function onPointerUp(event) {
-            // *** REMOVED re-enabling controls here ***
-            renderer.domElement.classList.remove('dragging-cube');
-            // renderer.domElement.classList.remove('grabbing'); // Let OrbitControls manage this
-
             if (isDraggingCube && !isAnimating) {
                 updatePointerCoords(event); const dragDistance = mouseDownPosition.distanceTo(mouse);
                 if (dragDistance < DRAG_THRESHOLD) { determineRotationFromClick(); } // CLICK
@@ -225,10 +227,36 @@
                      else { determineRotationFromClick(); } // Fallback to click if plane intersect fails
                 }
             }
-            isDraggingCube = false; intersectedObject = null; intersectedFaceNormal = null; dragStartPoint = null; // Reset state AFTER processing
+
+            if (isDraggingCube) { // If we were dragging a cube piece
+                controls.enabled = true; // Re-enable orbit controls
+            }
+            isDraggingCube = false;
+            intersectedObject = null;
+            intersectedFaceNormal = null;
+            dragStartPoint = null;
+            renderer.domElement.classList.remove('dragging-cube');
         }
 
-        function onPointerLeave(event) { if(isDraggingCube) { onPointerUp(event); } } // Only process if a drag was active
+        function onPointerLeave(event) {
+            if(isDraggingCube) {
+                // Treat pointer leave during drag same as pointer up
+                onPointerUp(event);
+            }
+        }
+
+        // ADDED onPointerCancel function
+        function onPointerCancel(event) {
+            if (isDraggingCube) {
+                controls.enabled = true; // Re-enable orbit controls
+                isDraggingCube = false;
+                intersectedObject = null;
+                intersectedFaceNormal = null;
+                dragStartPoint = null;
+                renderer.domElement.classList.remove('dragging-cube');
+                console.log("Pointer cancel during cube drag, state reset.");
+            }
+        }
 
         // --- Determine Rotation Click/Drag (same logic) ---
         function determineRotationFromClick() { /* ... same ... */ if (!intersectedFaceNormal || isAnimating) return; let face = null; const threshold = 0.9; if (Math.abs(intersectedFaceNormal.x) > threshold) face = intersectedFaceNormal.x > 0 ? 'R' : 'L'; else if (Math.abs(intersectedFaceNormal.y) > threshold) face = intersectedFaceNormal.y > 0 ? 'U' : 'D'; else if (Math.abs(intersectedFaceNormal.z) > threshold) face = intersectedFaceNormal.z > 0 ? 'F' : 'B'; if (face) { const direction = 1; const moveNotation = face + (direction === -1 ? "'" : ""); console.log("Click Rotation:", moveNotation); if (lastScrambleSequence.length > 0) { lastScrambleSequence = []; document.getElementById('solve-info').textContent = "(Manual moves made)"; } setAnimationQueue([moveNotation], null); } }
